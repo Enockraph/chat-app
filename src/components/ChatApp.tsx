@@ -207,14 +207,15 @@ export default function ChatApp() {
     if(step!=='app')return
 
     const init=async()=>{
+      try{
       // Charger en parallèle
       const [msgsRes,rxnsRes,csRes,pinsRes,profsRes,ptsRes]=await Promise.all([
-        supabase.from('messages').select('id,seq_id,username,content,file_url,file_name,audio_url,is_sticker,is_custom_sticker,msg_type,created_at,reply_to,reply_preview,reply_author,deleted_at').eq('msg_type','message').order('seq_id',{ascending:true}).limit(100).then(r=>r).catch(()=>({data:[]})),
-        supabase.from('reactions').select('id,message_id,username,emoji').then(r=>r).catch(()=>({data:[]})),
-        supabase.from('custom_stickers').select('*').order('created_at',{ascending:false}).limit(30).then(r=>r).catch(()=>({data:[]})),
-        supabase.from('pinned_convos').select('owner,target,custom_name').eq('owner',user).then(r=>r).catch(()=>({data:[]})),
-        supabase.from('profiles').select('username,avatar_color,avatar_emoji,bio,theme,status,avatar_url,location_lat,location_lng,location_name').then(r=>r).catch(()=>({data:[]})),
-        supabase.from('user_points').select('*').eq('username',user).maybeSingle().then(r=>r).catch(()=>({data:null})),
+        supabase.from('messages').select('id,seq_id,username,content,file_url,file_name,audio_url,is_sticker,is_custom_sticker,msg_type,created_at,reply_to,reply_preview,reply_author,deleted_at').eq('msg_type','message').order('seq_id',{ascending:true}).limit(100),
+        supabase.from('reactions').select('id,message_id,username,emoji'),
+        supabase.from('custom_stickers').select('*').order('created_at',{ascending:false}).limit(30),
+        supabase.from('pinned_convos').select('owner,target,custom_name').eq('owner',user),
+        supabase.from('profiles').select('username,avatar_color,avatar_emoji,bio,theme,status,avatar_url,location_lat,location_lng,location_name'),
+        supabase.from('user_points').select('*').eq('username',user).maybeSingle(),
       ])
 
       setMessages(msgsRes.data||[])
@@ -255,6 +256,7 @@ export default function ChatApp() {
       setConnStatus('🟢 Connecté')
       scrollBottom()
       if(Notification.permission==='default')Notification.requestPermission()
+      }catch(err){console.error('Init error:',err);setConnStatus('⚠️ Erreur - Rechargez')}
     }
     init()
 
