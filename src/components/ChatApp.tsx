@@ -601,7 +601,7 @@ export default function ChatApp() {
 
   // ── MAIN APP ──────────────────────────────────────────
   const myProfile=profile||getProfile(user)
-  const allConvos=[...new Set([...pinnedConvos.map(p=>p.target),...dmConvos,...onlineUsers.filter(u=>u.username!==user).map(u=>u.username)])]
+  const allConvos=Array.from(new Set([...pinnedConvos.map(p=>p.target),...dmConvos,...onlineUsers.filter(u=>u.username!==user).map(u=>u.username)]))
   const pointsToFCFA=(pts:number)=>Math.floor(pts/1000)*5000
 
   return(
