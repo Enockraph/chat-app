@@ -75,7 +75,7 @@ export default function ChatApp() {
   const [dms,setDms]=useState<DM[]>([])
   // Stocker toutes les réactions dans une map pour perf
   const [rxnMap,setRxnMap]=useState<Record<string,Reaction[]>>({})
-  const [onlineSet,setOnlineSet]=useState<Set<string>>(new Set())
+  const [onlineArr,setOnlineArr]=useState<string[]>([])
   const [profiles,setProfiles]=useState<Record<string,Profile>>({})
   const [allProfiles,setAllProfiles]=useState<Profile[]>([])
   const [customStickers,setCustomStickers]=useState<CustomSticker[]>([])
@@ -166,7 +166,7 @@ export default function ChatApp() {
   const loadOnline=useCallback(async()=>{
     const since=new Date(Date.now()-60000).toISOString() // 60s au lieu de 30s
     const{data}=await supabase.from('presence').select('username').eq('is_online',true).gte('last_seen',since)
-    setOnlineSet(new Set((data||[]).map((x:any)=>x.username)))
+    setOnlineArr((data||[]).map((x:any)=>x.username))
   },[])
 
   // ── INIT ──────────────────────────────────────────────
@@ -250,7 +250,7 @@ export default function ChatApp() {
 
       // DM convos
       const{data:dmsData}=await supabase.from('dms').select('from_user,to_user').or(`from_user.eq.${user},to_user.eq.${user}`)
-      if(dmsData){const s=new Set<string>();dmsData.forEach((d:any)=>s.add(d.from_user===user?d.to_user:d.from_user));setDmConvos(Array.from(s))}
+      if(dmsData){const seen:string[]=[];dmsData.forEach((d:any)=>{const o=d.from_user===user?d.to_user:d.from_user;if(!seen.includes(o))seen.push(o)});setDmConvos(seen)}
 
       await ping();await loadOnline()
       setConnStatus('🟢 Connecté')
@@ -489,7 +489,7 @@ export default function ChatApp() {
   const openDM=(username:string)=>{if(username===user)return;setDmTarget(username);setView('dm');setViewProfile(null)}
 
   // ── MEMOIZED LISTS ────────────────────────────────────
-  const allConvos=useMemo(()=>Array.from(new Set([...pinnedConvos.map(p=>p.target),...dmConvos,...Array.from(onlineSet).filter(u=>u!==user)])),[pinnedConvos,dmConvos,onlineSet,user])
+  const allConvos=useMemo(()=>Array.from(new Set([...pinnedConvos.map(p=>p.target),...dmConvos,...onlineArr.filter(u=>u!==user)])),[pinnedConvos,dmConvos,onlineArr,user])
 
   // ── MSG ITEM (mémoïsé) ────────────────────────────────
   const MsgItem=useCallback(({msg,isHovered}:{msg:Msg;isHovered:boolean})=>{
@@ -505,7 +505,7 @@ export default function ChatApp() {
     return(
       <div style={{display:'flex',alignItems:'flex-start',gap:8,flexDirection:isMe?'row-reverse':'row'}}
         onMouseEnter={()=>setHoverMsgId(msg.id)} onMouseLeave={()=>setHoverMsgId(null)}>
-        <Avatar p={p} size={32} online={onlineSet.has(msg.username)} onClick={()=>setViewProfile(p)}/>
+        <Avatar p={p} size={32} online={onlineArr.includes(msg.username)} onClick={()=>setViewProfile(p)}/>
         <div style={{display:'flex',flexDirection:'column',gap:3,maxWidth:'66%',alignItems:isMe?'flex-end':'flex-start'}}>
           {!isMe&&<div style={{fontSize:11,color:'var(--muted)',padding:'0 4px',fontWeight:500,cursor:'pointer'}} onClick={()=>setViewProfile(p)}>{msg.username}</div>}
           {msg.reply_author&&<div style={{background:'var(--bg3)',borderLeft:'3px solid var(--accent)',borderRadius:8,padding:'4px 10px',fontSize:12,color:'var(--muted)'}}><div style={{fontWeight:600,fontSize:11,color:'var(--accent2)',marginBottom:1}}>↩️ {msg.reply_author}</div><div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{msg.reply_preview}</div></div>}
@@ -543,7 +543,7 @@ export default function ChatApp() {
         </div>
       </div>
     )
-  },[user,getP,rxnMap,customStickers,onlineSet,toggleRxn,replyTo,commentTarget,comments,commentText])
+  },[user,getP,rxnMap,customStickers,onlineArr,toggleRxn,replyTo,commentTarget,comments,commentText])
 
   // ── LOGIN ──────────────────────────────────────────────
   if(step==='login')return(
@@ -608,7 +608,7 @@ export default function ChatApp() {
         <div style={{padding:'5px 7px',display:'flex',flexDirection:'column',gap:1}}>
           {[{v:'chat',l:'💬 Chat'},{v:'members',l:'👥 Membres'},{v:'map',l:'🗺️ Carte'}].map(({v,l})=>(
             <button key={v} onClick={()=>{setView(v as any);setDmTarget(null)}} style={{width:'100%',padding:'7px 10px',borderRadius:8,border:'none',background:view===v?'rgba(124,106,247,.2)':'transparent',color:view===v?'var(--accent2)':'var(--muted)',cursor:'pointer',textAlign:'left',fontSize:13,fontFamily:'inherit',fontWeight:view===v?600:400,display:'flex',alignItems:'center',gap:7}}>
-              {l}{v==='chat'&&<span style={{marginLeft:'auto',fontSize:10,background:'var(--accent)',color:'white',borderRadius:10,padding:'1px 6px'}}>{onlineSet.size}</span>}
+              {l}{v==='chat'&&<span style={{marginLeft:'auto',fontSize:10,background:'var(--accent)',color:'white',borderRadius:10,padding:'1px 6px'}}>{onlineArr.length}</span>}
             </button>
           ))}
         </div>
@@ -617,7 +617,7 @@ export default function ChatApp() {
         <div style={{flex:1,overflowY:'auto',padding:'0 7px 7px'}}>
           {allConvos.map(username=>{
             const p=getP(username)
-            const isOnline=onlineSet.has(username)
+            const isOnline=onlineArr.includes(username)
             const pin=pinnedConvos.find(x=>x.target===username)
             const isActive=view==='dm'&&dmTarget===username
             return(
@@ -635,7 +635,7 @@ export default function ChatApp() {
           })}
         </div>
         <div style={{padding:'7px 12px',borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:5,fontSize:11,color:'#34d399',justifyContent:'center'}}>
-          <span style={{width:6,height:6,borderRadius:'50%',background:'#34d399',display:'inline-block'}}/>{onlineSet.size} en ligne
+          <span style={{width:6,height:6,borderRadius:'50%',background:'#34d399',display:'inline-block'}}/>{onlineArr.length} en ligne
         </div>
       </div>
 
@@ -658,10 +658,10 @@ export default function ChatApp() {
         {/* MEMBERS */}
         {view==='members'&&(
           <div style={{flex:1,overflowY:'auto',padding:16}}>
-            <div style={{fontSize:12,color:'var(--muted)',marginBottom:12}}>{allProfiles.length} inscrits • {onlineSet.size} en ligne</div>
+            <div style={{fontSize:12,color:'var(--muted)',marginBottom:12}}>{allProfiles.length} inscrits • {onlineArr.length} en ligne</div>
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:10}}>
               {allProfiles.map(p=>{
-                const isOnline=onlineSet.has(p.username)
+                const isOnline=onlineArr.includes(p.username)
                 return(
                   <div key={p.username} onClick={()=>setViewProfile(p)} style={{background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:14,padding:14,cursor:'pointer',transition:'border-color .15s'}} onMouseEnter={e=>(e.currentTarget as HTMLElement).style.borderColor='var(--accent)'} onMouseLeave={e=>(e.currentTarget as HTMLElement).style.borderColor='var(--border)'}>
                     <div style={{display:'flex',alignItems:'center',gap:9,marginBottom:8}}>
@@ -687,7 +687,7 @@ export default function ChatApp() {
             <div style={{display:'flex',flexWrap:'wrap',gap:10}}>
               {allProfiles.filter(p=>p.location_lat).map(p=>(
                 <div key={p.username} onClick={()=>setViewProfile(p)} style={{background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:12,padding:'10px 14px',cursor:'pointer',display:'flex',alignItems:'center',gap:8}}>
-                  <Avatar p={p} size={30} online={onlineSet.has(p.username)}/>
+                  <Avatar p={p} size={30} online={onlineArr.includes(p.username)}/>
                   <div><div style={{fontSize:13,fontWeight:500}}>{p.username}</div><div style={{fontSize:11,color:'var(--muted)'}}>📍 {p.location_name}</div></div>
                 </div>
               ))}
@@ -933,7 +933,7 @@ export default function ChatApp() {
               <div style={{fontSize:12,color:'var(--muted)',marginBottom:3}}>{statusEmoji(viewProfile.status||'online')} {viewProfile.status||'online'}</div>
               {viewProfile.bio&&<div style={{fontSize:13,marginBottom:7}}>{viewProfile.bio}</div>}
               {viewProfile.location_name&&<div style={{fontSize:11,color:'var(--muted)',marginBottom:10}}>📍 {viewProfile.location_name}</div>}
-              {onlineSet.has(viewProfile.username)&&<div style={{background:'rgba(52,211,153,.1)',border:'1px solid rgba(52,211,153,.3)',borderRadius:20,padding:'3px 10px',fontSize:11,color:'#34d399',display:'inline-block',marginBottom:10}}>🟢 En ligne</div>}
+              {onlineArr.includes(viewProfile.username)&&<div style={{background:'rgba(52,211,153,.1)',border:'1px solid rgba(52,211,153,.3)',borderRadius:20,padding:'3px 10px',fontSize:11,color:'#34d399',display:'inline-block',marginBottom:10}}>🟢 En ligne</div>}
               <div style={{display:'flex',gap:7}}>
                 {viewProfile.username!==user&&<button onClick={()=>{openDM(viewProfile.username);setViewProfile(null)}} style={{flex:1,background:'linear-gradient(135deg,var(--accent),var(--accent2))',color:'white',border:'none',borderRadius:11,padding:9,fontSize:13,fontWeight:600,fontFamily:'inherit',cursor:'pointer'}}>💬 DM</button>}
                 {viewProfile.username===user&&<button onClick={()=>{setStep('setup');setViewProfile(null)}} style={{flex:1,background:'var(--bg3)',color:'var(--text)',border:'1px solid var(--border)',borderRadius:11,padding:9,fontSize:13,fontFamily:'inherit',cursor:'pointer'}}>✏️ Modifier</button>}
