@@ -153,12 +153,10 @@ export default function ChatApp() {
   },[toast$])
 
   const addPoints=useCallback(async(username:string,amount:number,reason:string)=>{
-    await supabase.from('user_points').upsert({username,points:amount,total_earned:amount},{onConflict:'username'})
-    await supabase.rpc('increment_points',{p_username:username,p_amount:amount}).catch(()=>{
-      supabase.from('user_points').select('points,total_earned').eq('username',username).single().then(({data})=>{
-        if(data)supabase.from('user_points').update({points:data.points+amount,total_earned:data.total_earned+amount}).eq('username',username)
-      })
-    })
+    try{await supabase.rpc('increment_points',{p_username:username,p_amount:amount})}catch(_e){
+      const{data}=await supabase.from('user_points').select('points,total_earned').eq('username',username).single()
+      if(data)await supabase.from('user_points').update({points:data.points+amount,total_earned:data.total_earned+amount}).eq('username',username)
+    }
     await supabase.from('points_history').insert({username,amount,reason})
     setUserPoints(p=>p?{...p,points:(p.points||0)+amount}:p)
   },[])
