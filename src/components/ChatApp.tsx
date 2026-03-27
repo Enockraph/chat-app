@@ -208,54 +208,76 @@ export default function ChatApp() {
 
     const init=async()=>{
       try{
-      // Charger en parallèle
-      const [msgsRes,rxnsRes,csRes,pinsRes,profsRes,ptsRes]=await Promise.all([
-        supabase.from('messages').select('id,seq_id,username,content,file_url,file_name,audio_url,is_sticker,is_custom_sticker,msg_type,created_at,reply_to,reply_preview,reply_author,deleted_at').eq('msg_type','message').order('seq_id',{ascending:true}).limit(100),
-        supabase.from('reactions').select('id,message_id,username,emoji'),
-        supabase.from('custom_stickers').select('*').order('created_at',{ascending:false}).limit(30),
-        supabase.from('pinned_convos').select('owner,target,custom_name').eq('owner',user),
-        supabase.from('profiles').select('username,avatar_color,avatar_emoji,bio,theme,status,avatar_url,location_lat,location_lng,location_name'),
-        supabase.from('user_points').select('*').eq('username',user).maybeSingle(),
-      ])
+        // Messages
+        const msgsRes=await supabase.from('messages').select('id,seq_id,username,content,file_url,file_name,audio_url,is_sticker,is_custom_sticker,msg_type,created_at,reply_to,reply_preview,reply_author,deleted_at').eq('msg_type','message').order('seq_id',{ascending:true}).limit(80)
+        setMessages(msgsRes.data||[])
 
-      setMessages(msgsRes.data||[])
+        // Profils
+        const profsRes=await supabase.from('profiles').select('username,avatar_color,avatar_emoji,bio,theme,status,avatar_url,location_lat,location_lng,location_name')
+        if(profsRes.data&&profsRes.data.length>0){
+          const m:Record<string,Profile>={}
+          profsRes.data.forEach((p:Profile)=>{m[p.username]=p})
+          setProfiles(m);setAllProfiles(profsRes.data)
+        }
 
-      // Construire rxnMap
-      const rm:Record<string,Reaction[]>={}
-      ;(rxnsRes.data||[]).forEach((r:Reaction)=>{if(!rm[r.message_id])rm[r.message_id]=[];rm[r.message_id].push(r)})
-      setRxnMap(rm)
+        // Réactions
+        const rxnsRes=await supabase.from('reactions').select('id,message_id,username,emoji')
+        const rm:Record<string,Reaction[]>={}
+        ;(rxnsRes.data||[]).forEach((r:Reaction)=>{if(!rm[r.message_id])rm[r.message_id]=[];rm[r.message_id].push(r)})
+        setRxnMap(rm)
 
-      setCustomStickers(csRes.data||[])
-      setPinnedConvos(pinsRes.data||[])
+        // Stickers custom
+        const csRes=await supabase.from('custom_stickers').select('*').order('created_at',{ascending:false}).limit(30)
+        setCustomStickers(csRes.data||[])
 
-      if(profsRes.data){
-        const m:Record<string,Profile>={}
-        profsRes.data.forEach((p:Profile)=>{m[p.username]=p})
-        setProfiles(m);setAllProfiles(profsRes.data)
-      }
+        // Convos épinglées
+        const pinsRes=await supabase.from('pinned_convos').select('owner,target,custom_name').eq('owner',user)
+        setPinnedConvos(pinsRes.data||[])
 
-      if(ptsRes.data)setUserPoints(ptsRes.data)
-      else{await supabase.from('user_points').insert({username:user,points:0,total_earned:0,streak_days:0});setUserPoints({username:user,points:0,total_earned:0,last_daily_claim:null,streak_days:0})}
+        // Points utilisateur
+        let pts:UserPoints|null=null
+        try{
+          const ptsRes=await supabase.from('user_points').select('*').eq('username',user).maybeSingle()
+          pts=ptsRes.data||null
+        }catch{pts=null}
+        if(pts){setUserPoints(pts)}
+        else{
+          try{
+            await supabase.from('user_points').insert({username:user,points:0,total_earned:0,streak_days:0})
+            pts={username:user,points:0,total_earned:0,last_daily_claim:null,streak_days:0}
+            setUserPoints(pts)
+          }catch{setUserPoints({username:user,points:0,total_earned:0,last_daily_claim:null,streak_days:0})}
+        }
 
-      // Claim daily points
-      const today=new Date().toISOString().split('T')[0]
-      if(ptsRes.data&&ptsRes.data.last_daily_claim!==today){
-        const yesterday=new Date(Date.now()-86400000).toISOString().split('T')[0]
-        const streak=ptsRes.data.last_daily_claim===yesterday?(ptsRes.data.streak_days||0)+1:1
-        const bonus=streak>=7?20:streak>=3?15:10
-        await supabase.from('user_points').update({points:(ptsRes.data.points||0)+bonus,total_earned:(ptsRes.data.total_earned||0)+bonus,last_daily_claim:today,streak_days:streak}).eq('username',user)
-        setUserPoints(p=>p?{...p,points:(p.points||0)+bonus,streak_days:streak,last_daily_claim:today}:p)
-        setTimeout(()=>toast$(`🎉 +${bonus} pts ! Série ${streak} jour${streak>1?'s':''}`),1000)
-      }
+        // Daily claim
+        if(pts){
+          const today=new Date().toISOString().split('T')[0]
+          if(pts.last_daily_claim!==today){
+            const yesterday=new Date(Date.now()-86400000).toISOString().split('T')[0]
+            const streak=pts.last_daily_claim===yesterday?((pts.streak_days)||0)+1:1
+            const bonus=streak>=7?20:streak>=3?15:10
+            try{
+              await supabase.from('user_points').update({points:(pts.points||0)+bonus,total_earned:(pts.total_earned||0)+bonus,last_daily_claim:today,streak_days:streak}).eq('username',user)
+              setUserPoints(p=>p?{...p,points:(p.points||0)+bonus,streak_days:streak,last_daily_claim:today}:p)
+              setTimeout(()=>toast$(`🎉 +${bonus} pts ! Série ${streak} jour${streak>1?'s':''}`),1000)
+            }catch{}
+          }
+        }
 
-      // DM convos
-      const{data:dmsData}=await supabase.from('dms').select('from_user,to_user').or(`from_user.eq.${user},to_user.eq.${user}`)
-      if(dmsData){const seen:string[]=[];dmsData.forEach((d:any)=>{const o=d.from_user===user?d.to_user:d.from_user;if(!seen.includes(o))seen.push(o)});setDmConvos(seen)}
+        // DM convos
+        try{
+          const{data:dmsData}=await supabase.from('dms').select('from_user,to_user').or(`from_user.eq.${user},to_user.eq.${user}`)
+          if(dmsData){
+            const seen:string[]=[]
+            dmsData.forEach((d:any)=>{const o=d.from_user===user?d.to_user:d.from_user;if(!seen.includes(o))seen.push(o)})
+            setDmConvos(seen)
+          }
+        }catch{}
 
-      await ping();await loadOnline()
-      setConnStatus('🟢 Connecté')
-      scrollBottom()
-      if(Notification.permission==='default')Notification.requestPermission()
+        await ping();await loadOnline()
+        setConnStatus('🟢 Connecté')
+        scrollBottom()
+        if(Notification.permission==='default')Notification.requestPermission()
       }catch(err){console.error('Init error:',err);setConnStatus('⚠️ Erreur - Rechargez')}
     }
     init()
