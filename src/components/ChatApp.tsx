@@ -45,7 +45,7 @@ const QUIZ_QS = [
 ]
 const WORDS = ['SPORT','BLANC','ROUGE','CRANE','SOLEIL','NUIT','MONDE','PLACE','FORET','ECOLE']
 
-const colorForName=(n:string)=>{let h=0;for(const c of n)h=c.charCodeAt(0)+((h<<5)-h);return AVATAR_COLORS[Math.abs(h)%AVATAR_COLORS.length]}
+const colorForName=(n:string)=>{let h=0;for(let i=0;i<n.length;i++)h=n.charCodeAt(i)+((h<<5)-h);return AVATAR_COLORS[Math.abs(h)%AVATAR_COLORS.length]}
 const statusEmoji=(s:string)=>({online:'🟢',away:'🌙',busy:'🔴',gaming:'🎮'}[s]||'🟢')
 const ptsFCFA=(pts:number)=>`${Math.floor(pts/10)*5} FCFA`
 
@@ -347,6 +347,7 @@ export default function ChatApp() {
 
   const send=async()=>{
     if(!text.trim()&&!selectedFile)return
+    if(text.length>2000){toast$("❌ Message trop long (max 2000 car.)");return}
     setSending(true)
     let file_url=null,file_name=null
     if(selectedFile){const r=await upload(selectedFile);if(r){file_url=r.url;file_name=r.name}else{toast$('Erreur upload');setSending(false);return}}
@@ -445,7 +446,7 @@ export default function ChatApp() {
       s.board=s.board.map((v:any,i:number)=>i===move.i?(isP1?'X':'O'):v)
       s.turn=s.turn==='X'?'O':'X';s.moves++
       const lines=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]]
-      for(const[a,b,c]of lines)if(s.board[a]&&s.board[a]===s.board[b]&&s.board[a]===s.board[c]){winner=s.board[a]==='X'?activeGame.player1:activeGame.player2!;status='finished';break}
+      for(let li=0;li<lines.length;li++){const[a,b,c]=lines[li];if(s.board[a]&&s.board[a]===s.board[b]&&s.board[a]===s.board[c]){winner=s.board[a]==='X'?activeGame.player1:activeGame.player2!;status='finished';break}}
       if(!winner&&s.moves===9)status='draw'
     }else if(activeGame.game_type==='rps'){
       if(isP1)s.p1=move.c;else s.p2=move.c
@@ -489,7 +490,7 @@ export default function ChatApp() {
   const openDM=(username:string)=>{if(username===user)return;setDmTarget(username);setView('dm');setViewProfile(null)}
 
   // ── MEMOIZED LISTS ────────────────────────────────────
-  const allConvos=useMemo(()=>Array.from(new Set([...pinnedConvos.map(p=>p.target),...dmConvos,...onlineArr.filter(u=>u!==user)])),[pinnedConvos,dmConvos,onlineArr,user])
+  const allConvos=useMemo(()=>{const all=[...pinnedConvos.map(p=>p.target),...dmConvos,...onlineArr.filter(u=>u!==user)];return all.filter((v,i)=>all.indexOf(v)===i)},[pinnedConvos,dmConvos,onlineArr,user])
 
   // ── MSG ITEM (mémoïsé) ────────────────────────────────
   const MsgItem=useCallback(({msg,isHovered}:{msg:Msg;isHovered:boolean})=>{
@@ -516,7 +517,7 @@ export default function ChatApp() {
                 {msg.audio_url&&<AudioPlayer url={msg.audio_url} isMe={isMe}/>}
                 {msg.file_url&&(isImage?<img src={msg.file_url} alt="" style={{maxWidth:240,maxHeight:180,borderRadius:14,cursor:'pointer',display:'block'}} onClick={()=>window.open(msg.file_url!,'_blank')} loading="lazy"/>:<a href={msg.file_url} target="_blank" rel="noreferrer" style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:14,padding:'10px 14px',display:'flex',alignItems:'center',gap:10,textDecoration:'none',color:'var(--text)'}}><span style={{fontSize:22}}>{FILE_ICONS[ext]||'📎'}</span><div><div style={{fontSize:13,fontWeight:500}}>{msg.file_name}</div></div></a>)}
                 {msg.content&&(msg.is_sticker
-                  ?<div style={{fontSize:cs?16:50,lineHeight:1,padding:cs?'10px 16px':4,background:cs?.bg_color,borderRadius:cs?14:0,color:cs?.text_color,fontWeight:cs?700:undefined}}>{msg.content}</div>
+                  ?<div style={{fontSize:cs?16:50,lineHeight:1,padding:cs?'10px 16px':4,background:cs?.bg_color,borderRadius:cs?14:0,color:cs?.text_color,fontWeight:cs?700:undefined}}>{typeof msg.content==="string"?msg.content.slice(0,2000):msg.content}</div>
                   :<div style={{padding:'10px 14px',borderRadius:18,fontSize:14,lineHeight:1.55,wordBreak:'break-word',background:isMe?'var(--me-bubble)':'var(--bg3)',border:isMe?'none':'1px solid var(--border)',borderBottomRightRadius:isMe?5:18,borderBottomLeftRadius:isMe?18:5,color:isMe?'var(--me-text)':'var(--text)'}}>{msg.content}</div>
                 )}
                 {isHovered&&<div style={{position:'absolute',[isMe?'right':'left']:0,bottom:'100%',marginBottom:4,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:30,padding:'5px 8px',display:'flex',gap:2,zIndex:10,boxShadow:'0 6px 20px rgba(0,0,0,.5)',whiteSpace:'nowrap'}}>
