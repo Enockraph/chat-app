@@ -45,7 +45,7 @@ const QUIZ_QS = [
 ]
 const WORDS = ['SPORT','BLANC','ROUGE','CRANE','SOLEIL','NUIT','MONDE','PLACE','FORET','ECOLE']
 
-const colorForName=(n:string)=>{let h=0;for(let i=0;i<n.length;i++)h=n.charCodeAt(i)+((h<<5)-h);return AVATAR_COLORS[Math.abs(h)%AVATAR_COLORS.length]}
+const colorForName=(n:string)=>{if(!n||typeof n!=='string')return AVATAR_COLORS[0];let h=0;for(let i=0;i<n.length;i++)h=n.charCodeAt(i)+((h<<5)-h);return AVATAR_COLORS[Math.abs(h)%AVATAR_COLORS.length]}
 const statusEmoji=(s:string)=>({online:'🟢',away:'🌙',busy:'🔴',gaming:'🎮'}[s]||'🟢')
 const ptsFCFA=(pts:number)=>`${Math.floor(pts/10)*5} FCFA`
 
@@ -142,6 +142,7 @@ export default function ChatApp() {
   },[])
 
   const getP=useCallback((u:string):Profile=>{
+    if(!u)return{username:'?',avatar_color:AVATAR_COLORS[0],avatar_emoji:'😊',bio:'',theme:'dark',status:'online'}
     return profiles[u]||{username:u,avatar_color:colorForName(u),avatar_emoji:'😊',bio:'',theme:'dark',status:'online'}
   },[profiles])
 
@@ -723,7 +724,7 @@ export default function ChatApp() {
         {(view==='chat'||view==='dm')&&(
           <>
             <div ref={msgsRef} style={{flex:1,overflowY:'auto',padding:'14px',display:'flex',flexDirection:'column',gap:8}}>
-              {(view==='chat'?messages:dms).map((msg:any)=>(
+              {(view==='chat'?messages:dms).filter((msg:any)=>msg&&msg.id).map((msg:any)=>(
                 <MsgItem key={msg.id} msg={msg} isHovered={hoverMsgId===msg.id}/>
               ))}
             </div>
