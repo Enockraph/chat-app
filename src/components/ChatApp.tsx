@@ -189,24 +189,90 @@ export default function ChatApp() {
     const name=pseudo.trim();if(!name)return
     const saved=localStorage.getItem('chat_user')
     const target=saved||name
+    // Générer fingerprint navigateur (canvas + user-agent + langue + écran)
+    let fingerprint='unknown'
+    try{
+      const canvas=document.createElement('canvas')
+      const ctx=canvas.getContext('2d')
+      if(ctx){ctx.textBaseline='top';ctx.font='14px Arial';ctx.fillText('fingerprint',0,0)}
+      const ua=navigator.userAgent
+      const lang=navigator.language
+      const screen_info=`${window.screen.width}x${window.screen.height}x${window.screen.colorDepth}`
+      const tz=Intl.DateTimeFormat().resolvedOptions().timeZone
+      const raw=canvas.toDataURL()+ua+lang+screen_info+tz
+      let hash=0;for(let i=0;i<raw.length;i++)hash=((hash<<5)-hash)+raw.charCodeAt(i)
+      fingerprint=Math.abs(hash).toString(36)
+    }catch{}
+    // Vérifier si la fingerprint est bannie
+    const{data:fpBan}=await supabase.from('bans').select('id').eq('fingerprint',fingerprint).limit(1)
+    if(fpBan&&fpBan.length>0){setPseudo('');alert('🚫 Accès refusé depuis cet appareil.');return}
     // Récupérer IP
     let ip='unknown'
     try{const r=await fetch('https://api.ipify.org?format=json');const d=await r.json();ip=d.ip||'unknown'}catch{}
     // Vérifier si l'IP est bannie
-    const{data:ipBan}=await supabase.from('bans').select('id,reason').eq('ip_address',ip).limit(1)
+    const{data:ipBan}=await supabase.from('bans').select('id').eq('ip_address',ip).limit(1)
     if(ipBan&&ipBan.length>0){setPseudo('');alert('🚫 Accès refusé. Votre accès a été révoqué.');return}
     const{data:p}=await supabase.from('profiles').select('*').eq('username',target).maybeSingle()
     if(p){
-      // Vérifier si le compte est banni
       if(p.is_banned){setPseudo('');alert('🚫 Ce compte a été banni.');return}
-      // Vérifier par username dans bans
       const{data:userBan}=await supabase.from('bans').select('id').eq('username',target).limit(1)
       if(userBan&&userBan.length>0){setPseudo('');alert('🚫 Ce compte a été banni.');return}
-      // Sauvegarder IP
+      // Sauvegarder IP + fingerprint
       await supabase.from('profiles').update({last_ip:ip}).eq('username',target)
+      await supabase.from('user_fingerprints').upsert({username:target,fingerprint,ip_address:ip,user_agent:navigator.userAgent,last_seen:new Date().toISOString()},{onConflict:'username,fingerprint'})
       setUser(target);setProfile(p);setAvatarColor(p.avatar_color);setAvatarEmoji(p.avatar_emoji);setBio(p.bio);setTheme(p.theme||'dark');setUserStatus(p.status||'online');localStorage.setItem('chat_user',target);setStep('app')
     }
     else{setUser(name);setStep('setup')}
+  }
+
+  // ── BOT : envoyer un DM automatique ────────────────────
+  const sendBotWelcome=async(username:string)=>{
+    try{
+      const{data:activeBots}=await supabase.from('bots').select('*').eq('is_active',true)
+      if(!activeBots||activeBots.length===0)return
+      // Choisir un bot aléatoire
+      const bot=activeBots[Math.floor(Math.random()*activeBots.length)]
+      // Délai aléatoire
+      const delay=(bot.delay_min+Math.random()*(bot.delay_max-bot.delay_min))*1000
+      setTimeout(async()=>{
+        try{
+          const res=await fetch('/api/bot-chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({botPersonality:bot.personality,botName:bot.name,message:`Dis bonjour à ${username} qui vient de rejoindre l'app pour la première fois. Présente-toi brièvement et chaleureusement.`,history:[]})})
+          const data=await res.json()
+          if(data.reply){
+            await supabase.from('dms').insert({from_user:bot.name,to_user:username,content:data.reply,is_sticker:false})
+          }
+        }catch{}
+      },delay)
+    }catch{}
+  }
+
+  // ── BOT : répondre aux DMs ────────────────────────────
+  const handleBotReply=async(fromUser:string,toUser:string,content:string)=>{
+    try{
+      const{data:activeBots}=await supabase.from('bots').select('*').eq('is_active',true).eq('name',fromUser)
+      // Si le message vient d'un vrai user et qu'un bot lui a écrit
+      const{data:botNames}=await supabase.from('bots').select('name').eq('is_active',true)
+      if(!botNames)return
+      const botNamesArr=botNames.map((b:any)=>b.name)
+      // Chercher si un bot a déjà DM cet user
+      const{data:existingDm}=await supabase.from('dms').select('from_user').or(`and(from_user.in.(${botNamesArr.map((n:string)=>`"${n}"`).join(',')}),to_user.eq.${fromUser})`).limit(1)
+      if(!existingDm||existingDm.length===0)return
+      const botName=existingDm[0].from_user
+      const{data:bot}=await supabase.from('bots').select('*').eq('name',botName).eq('is_active',true).maybeSingle()
+      if(!bot)return
+      // Récupérer historique
+      const{data:history}=await supabase.from('dms').select('from_user,content').or(`and(from_user.eq.${fromUser},to_user.eq.${botName}),and(from_user.eq.${botName},to_user.eq.${fromUser})`).order('created_at',{ascending:true}).limit(20)
+      const histArr=(history||[]).map((h:any)=>({role:h.from_user===botName?'assistant':'user',content:h.content}))
+      // Délai aléatoire
+      const delay=(bot.delay_min+Math.random()*(bot.delay_max-bot.delay_min))*1000
+      setTimeout(async()=>{
+        try{
+          const res=await fetch('/api/bot-chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({botPersonality:bot.personality,botName:bot.name,message:content,history:histArr})})
+          const data=await res.json()
+          if(data.reply)await supabase.from('dms').insert({from_user:botName,to_user:fromUser,content:data.reply,is_sticker:false})
+        }catch{}
+      },delay)
+    }catch{}
   }
 
   const handleSetup=async()=>{
@@ -223,6 +289,7 @@ export default function ChatApp() {
     const p:Profile={username:user,avatar_color:avatarColor,avatar_emoji:avatarEmoji,bio,theme,status:userStatus,avatar_url,location_lat,location_lng,location_name}
     await supabase.from('profiles').upsert(p,{onConflict:'username'})
     setProfile(p);localStorage.setItem('chat_user',user);localStorage.setItem('chat_theme',theme);setStep('app')
+    sendBotWelcome(user)
   }
 
   // ── APP INIT ──────────────────────────────────────────
@@ -345,6 +412,8 @@ export default function ChatApp() {
         scrollBottom()
         if(document.hidden&&dm.from_user!==user&&Notification.permission==='granted')
           new Notification(`🔒 ${dm.from_user}`,{body:dm.content||'📎'})
+        // Bot reply si le message vient d'un vrai user
+        if(dm.from_user===user&&dm.content)handleBotReply(dm.from_user,dm.to_user,dm.content)
       })
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'reactions'},p=>{
         const r=p.new as Reaction
