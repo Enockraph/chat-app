@@ -189,8 +189,23 @@ export default function ChatApp() {
     const name=pseudo.trim();if(!name)return
     const saved=localStorage.getItem('chat_user')
     const target=saved||name
+    // Récupérer IP
+    let ip='unknown'
+    try{const r=await fetch('https://api.ipify.org?format=json');const d=await r.json();ip=d.ip||'unknown'}catch{}
+    // Vérifier si l'IP est bannie
+    const{data:ipBan}=await supabase.from('bans').select('id,reason').eq('ip_address',ip).limit(1)
+    if(ipBan&&ipBan.length>0){setPseudo('');alert('🚫 Accès refusé. Votre accès a été révoqué.');return}
     const{data:p}=await supabase.from('profiles').select('*').eq('username',target).maybeSingle()
-    if(p){setUser(target);setProfile(p);setAvatarColor(p.avatar_color);setAvatarEmoji(p.avatar_emoji);setBio(p.bio);setTheme(p.theme||'dark');setUserStatus(p.status||'online');localStorage.setItem('chat_user',target);setStep('app')}
+    if(p){
+      // Vérifier si le compte est banni
+      if(p.is_banned){setPseudo('');alert('🚫 Ce compte a été banni.');return}
+      // Vérifier par username dans bans
+      const{data:userBan}=await supabase.from('bans').select('id').eq('username',target).limit(1)
+      if(userBan&&userBan.length>0){setPseudo('');alert('🚫 Ce compte a été banni.');return}
+      // Sauvegarder IP
+      await supabase.from('profiles').update({last_ip:ip}).eq('username',target)
+      setUser(target);setProfile(p);setAvatarColor(p.avatar_color);setAvatarEmoji(p.avatar_emoji);setBio(p.bio);setTheme(p.theme||'dark');setUserStatus(p.status||'online');localStorage.setItem('chat_user',target);setStep('app')
+    }
     else{setUser(name);setStep('setup')}
   }
 
