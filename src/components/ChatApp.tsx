@@ -112,6 +112,13 @@ export default function ChatApp() {
   const [commentText,setCommentText]=useState('')
   const [avatarFile,setAvatarFile]=useState<File|null>(null)
   const [wordleGuess,setWordleGuess]=useState('')
+  const [blockedUsers,setBlockedUsers]=useState<string[]>([])
+  const [showBgModal,setShowBgModal]=useState(false)
+  const [convBg,setConvBg]=useState<Record<string,string>>({})
+  const [bgFile,setBgFile]=useState<File|null>(null)
+  const [bgColor,setBgColor]=useState('')
+  const [deleteConfirm,setDeleteConfirm]=useState<string|null>(null)
+  const bgFileRef=useRef<HTMLInputElement>(null)
 
   const msgsRef=useRef<HTMLDivElement>(null)
   const inputRef=useRef<HTMLTextAreaElement>(null)
@@ -275,6 +282,16 @@ export default function ChatApp() {
           }
         }catch{}
 
+        // Bloqués + fonds de conversation
+        try{
+          const blRes=await supabase.from('blocked_users').select('blocked').eq('blocker',user)
+          setBlockedUsers((blRes.data||[]).map((b:any)=>b.blocked))
+          const bgRes=await supabase.from('conversation_backgrounds').select('target,bg_url,bg_color').eq('owner',user)
+          const bgMap:Record<string,string>={}
+          ;(bgRes.data||[]).forEach((b:any)=>{bgMap[b.target]=b.bg_url||b.bg_color||''})
+          setConvBg(bgMap)
+        }catch{}
+
         await ping();await loadOnline()
         setConnStatus('🟢 Connecté')
         scrollBottom()
@@ -359,6 +376,34 @@ export default function ChatApp() {
   // ── ACTIONS ───────────────────────────────────────────
   const deleteMsg=async(id:string)=>{
     await supabase.from('messages').update({deleted_at:new Date().toISOString(),content:'Ce message a été supprimé.'}).eq('id',id)
+    setDeleteConfirm(null)
+  }
+
+  const blockUser=async(target:string)=>{
+    await supabase.from('blocked_users').insert({blocker:user,blocked:target})
+    setBlockedUsers(p=>[...p,target])
+    toast$(`🚫 ${target} bloqué`)
+    setViewProfile(null)
+  }
+
+  const unblockUser=async(target:string)=>{
+    await supabase.from('blocked_users').delete().eq('blocker',user).eq('blocked',target)
+    setBlockedUsers(p=>p.filter(u=>u!==target))
+    toast$(`✅ ${target} débloqué`)
+  }
+
+  const saveBg=async()=>{
+    if(!dmTarget)return
+    let url=''
+    if(bgFile){
+      const path=`bg_${user}_${dmTarget}_${Date.now()}.${bgFile.name.split('.').pop()}`
+      const{error}=await supabase.storage.from('chat-files').upload(path,bgFile,{upsert:true})
+      if(!error)url=supabase.storage.from('chat-files').getPublicUrl(path).data.publicUrl
+    }
+    await supabase.from('conversation_backgrounds').upsert({owner:user,target:dmTarget,bg_url:url||null,bg_color:bgColor||null},{onConflict:'owner,target'})
+    setConvBg(p=>({...p,[dmTarget]:url||bgColor}))
+    setBgFile(null);setBgColor('');setShowBgModal(false)
+    toast$('🖼️ Fond mis à jour !')
   }
 
   const upload=async(file:File)=>{
@@ -547,7 +592,7 @@ export default function ChatApp() {
                   {QUICK_REACTIONS.map(e=><button key={e} onClick={()=>toggleRxn(msg.id,e)} style={{fontSize:18,background:'none',border:'none',cursor:'pointer',padding:'2px 3px',borderRadius:8}}>{e}</button>)}
                   <button onClick={()=>setReplyTo({id:msg.id,content:msg.content,author:msg.username})} style={{fontSize:13,background:'none',border:'none',cursor:'pointer',padding:'2px 5px',color:'var(--muted)'}}>↩️</button>
                   <button onClick={()=>loadComments(msg.id)} style={{fontSize:13,background:'none',border:'none',cursor:'pointer',padding:'2px 5px',color:'var(--muted)'}}>💬</button>
-                  {isMe&&<button onClick={()=>deleteMsg(msg.id)} style={{fontSize:13,background:'none',border:'none',cursor:'pointer',padding:'2px 5px',color:'#f87171'}}>🗑</button>}
+                  {isMe&&<button onClick={()=>setDeleteConfirm(msg.id)} style={{fontSize:13,background:'none',border:'none',cursor:'pointer',padding:'2px 5px',color:'#f87171'}}>🗑</button>}
                 </div>}
               </>
             }
@@ -675,7 +720,7 @@ export default function ChatApp() {
           </div>
           <div style={{display:'flex',alignItems:'center',gap:7}}>
             <button onClick={()=>setShowPoints(true)} style={{background:'rgba(251,191,36,.1)',border:'1px solid rgba(251,191,36,.3)',borderRadius:20,padding:'4px 11px',fontSize:12,color:'#fbbf24',fontWeight:600,cursor:'pointer'}}>⭐ {userPoints?.points||0} • {ptsFCFA(userPoints?.points||0)}</button>
-            {view==='dm'&&dmTarget&&<button onClick={()=>setShowGames(true)} style={{background:'rgba(124,106,247,.15)',border:'1px solid rgba(124,106,247,.3)',borderRadius:20,padding:'4px 11px',fontSize:12,color:'var(--accent2)',cursor:'pointer'}}>🎮</button>}
+            {view==='dm'&&dmTarget&&<><button onClick={()=>setShowBgModal(true)} style={{background:'rgba(124,106,247,.15)',border:'1px solid rgba(124,106,247,.3)',borderRadius:20,padding:'4px 11px',fontSize:12,color:'var(--accent2)',cursor:'pointer'}}>🖼️</button><button onClick={()=>setShowGames(true)} style={{background:'rgba(124,106,247,.15)',border:'1px solid rgba(124,106,247,.3)',borderRadius:20,padding:'4px 11px',fontSize:12,color:'var(--accent2)',cursor:'pointer'}}>🎮</button></>}
           </div>
         </header>
 
@@ -723,8 +768,8 @@ export default function ChatApp() {
         {/* MESSAGES */}
         {(view==='chat'||view==='dm')&&(
           <>
-            <div ref={msgsRef} style={{flex:1,overflowY:'auto',padding:'14px',display:'flex',flexDirection:'column',gap:8}}>
-              {(view==='chat'?messages:dms).filter((msg:any)=>msg&&msg.id).map((msg:any)=>(
+            <div ref={msgsRef} style={{flex:1,overflowY:'auto',padding:'14px',display:'flex',flexDirection:'column',gap:8,backgroundImage:view==='dm'&&dmTarget&&convBg[dmTarget]&&convBg[dmTarget].startsWith('http')?`url(${convBg[dmTarget]})`:'none',backgroundSize:'cover',backgroundPosition:'center',backgroundColor:view==='dm'&&dmTarget&&convBg[dmTarget]&&!convBg[dmTarget].startsWith('http')?convBg[dmTarget]:'transparent'}}>
+              {(view==='chat'?messages:dms).filter((msg:any)=>msg&&msg.id&&!blockedUsers.includes(msg.username||msg.from_user)).map((msg:any)=>(
                 <MsgItem key={msg.id} msg={msg} isHovered={hoverMsgId===msg.id}/>
               ))}
             </div>
@@ -959,7 +1004,7 @@ export default function ChatApp() {
               {viewProfile.location_name&&<div style={{fontSize:11,color:'var(--muted)',marginBottom:10}}>📍 {viewProfile.location_name}</div>}
               {onlineArr.includes(viewProfile.username)&&<div style={{background:'rgba(52,211,153,.1)',border:'1px solid rgba(52,211,153,.3)',borderRadius:20,padding:'3px 10px',fontSize:11,color:'#34d399',display:'inline-block',marginBottom:10}}>🟢 En ligne</div>}
               <div style={{display:'flex',gap:7}}>
-                {viewProfile.username!==user&&<button onClick={()=>{openDM(viewProfile.username);setViewProfile(null)}} style={{flex:1,background:'linear-gradient(135deg,var(--accent),var(--accent2))',color:'white',border:'none',borderRadius:11,padding:9,fontSize:13,fontWeight:600,fontFamily:'inherit',cursor:'pointer'}}>💬 DM</button>}
+                {viewProfile.username!==user&&<><button onClick={()=>{openDM(viewProfile.username);setViewProfile(null)}} style={{flex:1,background:'linear-gradient(135deg,var(--accent),var(--accent2))',color:'white',border:'none',borderRadius:11,padding:9,fontSize:13,fontWeight:600,fontFamily:'inherit',cursor:'pointer'}}>💬 DM</button><button onClick={()=>{blockedUsers.includes(viewProfile.username)?unblockUser(viewProfile.username):blockUser(viewProfile.username)}} style={{background:blockedUsers.includes(viewProfile.username)?'rgba(52,211,153,.15)':'rgba(248,113,113,.15)',color:blockedUsers.includes(viewProfile.username)?'#34d399':'#f87171',border:`1px solid ${blockedUsers.includes(viewProfile.username)?'rgba(52,211,153,.3)':'rgba(248,113,113,.3)'}`,borderRadius:11,padding:'9px 10px',fontSize:12,fontFamily:'inherit',cursor:'pointer'}}>{blockedUsers.includes(viewProfile.username)?'✅ Débloquer':'🚫 Bloquer'}</button></>
                 {viewProfile.username===user&&<button onClick={()=>{setStep('setup');setViewProfile(null)}} style={{flex:1,background:'var(--bg3)',color:'var(--text)',border:'1px solid var(--border)',borderRadius:11,padding:9,fontSize:13,fontFamily:'inherit',cursor:'pointer'}}>✏️ Modifier</button>}
                 <button onClick={()=>setViewProfile(null)} style={{background:'var(--bg3)',color:'var(--muted)',border:'1px solid var(--border)',borderRadius:11,padding:'9px 13px',fontSize:13,fontFamily:'inherit',cursor:'pointer'}}>✕</button>
               </div>
@@ -977,6 +1022,50 @@ export default function ChatApp() {
             <div style={{display:'flex',gap:7}}>
               <button onClick={async()=>{await supabase.from('pinned_convos').upsert({id:Math.random().toString(36).slice(2),owner:user,target:pinModal,custom_name:pinName||null},{onConflict:'owner,target'});const{data}=await supabase.from('pinned_convos').select('*').eq('owner',user);setPinnedConvos(data||[]);setPinModal(null);toast$('📌 Épinglé !')}} style={{flex:1,background:'linear-gradient(135deg,var(--accent),var(--accent2))',color:'white',border:'none',borderRadius:9,padding:9,fontSize:12,fontWeight:600,fontFamily:'inherit',cursor:'pointer'}}>📌 Épingler</button>
               <button onClick={()=>setPinModal(null)} style={{background:'var(--bg3)',color:'var(--muted)',border:'1px solid var(--border)',borderRadius:9,padding:'9px 13px',fontSize:12,fontFamily:'inherit',cursor:'pointer'}}>Annuler</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE CONFIRM */}
+      {deleteConfirm&&(
+        <div onClick={()=>setDeleteConfirm(null)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200,backdropFilter:'blur(4px)'}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:18,padding:24,width:280,textAlign:'center',boxShadow:'0 20px 60px rgba(0,0,0,.6)'}}>
+            <div style={{fontSize:36,marginBottom:10}}>🗑️</div>
+            <div style={{fontWeight:700,fontSize:16,marginBottom:6}}>Supprimer ce message ?</div>
+            <div style={{fontSize:12,color:'var(--muted)',marginBottom:18}}>Cette action est irréversible</div>
+            <div style={{display:'flex',gap:9}}>
+              <button onClick={()=>deleteMsg(deleteConfirm)} style={{flex:1,background:'linear-gradient(135deg,#ef4444,#f87171)',color:'white',border:'none',borderRadius:11,padding:11,fontSize:13,fontWeight:600,fontFamily:'inherit',cursor:'pointer'}}>Supprimer</button>
+              <button onClick={()=>setDeleteConfirm(null)} style={{flex:1,background:'var(--bg3)',color:'var(--muted)',border:'1px solid var(--border)',borderRadius:11,padding:11,fontSize:13,fontFamily:'inherit',cursor:'pointer'}}>Annuler</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BG MODAL */}
+      {showBgModal&&dmTarget&&(
+        <div onClick={()=>setShowBgModal(false)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200,backdropFilter:'blur(6px)'}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:20,padding:24,width:320,display:'flex',flexDirection:'column',gap:14,boxShadow:'0 20px 60px rgba(0,0,0,.6)'}}>
+            <div style={{fontWeight:700,fontSize:17}}>🖼️ Fond de conversation</div>
+            <div style={{fontSize:12,color:'var(--muted)'}}>Avec {dmTarget}</div>
+            <input ref={bgFileRef} type="file" accept="image/*" style={{display:'none'}} onChange={e=>e.target.files?.[0]&&setBgFile(e.target.files[0])}/>
+            <button onClick={()=>bgFileRef.current?.click()} style={{background:'var(--bg3)',border:'1px dashed var(--border)',borderRadius:12,padding:14,cursor:'pointer',color:'var(--text)',fontFamily:'inherit',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+              {bgFile?<><span>✅</span><span>{bgFile.name.slice(0,25)}</span></>:<><span>📷</span><span>Choisir une photo</span></>}
+            </button>
+            <div>
+              <div style={{fontSize:12,color:'var(--muted)',marginBottom:8}}>Ou choisir une couleur</div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                {['#0d0d12','#0a0c08','#050510','#0e0816','#120808','#0a0f1a','#1a0a0a','#0a1a0a','#1a1a0a','transparent'].map(c=>(
+                  <button key={c} onClick={()=>setBgColor(c)} style={{width:32,height:32,borderRadius:8,background:c==='transparent'?'linear-gradient(135deg,#ccc 25%,white 25%,white 75%,#ccc 75%)':c,border:`2px solid ${bgColor===c?'var(--accent)':'var(--border)'}`,cursor:'pointer'}}/>
+                ))}
+                <input type="color" value={bgColor||'#0d0d12'} onChange={e=>setBgColor(e.target.value)} style={{width:32,height:32,borderRadius:8,border:'1px solid var(--border)',cursor:'pointer',padding:2}}/>
+              </div>
+            </div>
+            {(bgFile||bgColor)&&<div style={{height:60,borderRadius:10,backgroundImage:bgFile?`url(${URL.createObjectURL(bgFile)})`:'none',backgroundColor:!bgFile&&bgColor?bgColor:'transparent',backgroundSize:'cover',backgroundPosition:'center',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:'rgba(255,255,255,.7)'}}>Aperçu</div>}
+            <div style={{display:'flex',gap:9}}>
+              <button onClick={saveBg} style={{flex:1,background:'linear-gradient(135deg,var(--accent),var(--accent2))',color:'white',border:'none',borderRadius:11,padding:11,fontSize:13,fontWeight:600,fontFamily:'inherit',cursor:'pointer'}}>Appliquer ✨</button>
+              <button onClick={async()=>{await supabase.from('conversation_backgrounds').delete().eq('owner',user).eq('target',dmTarget);setConvBg(p=>{const n={...p};delete n[dmTarget];return n});setShowBgModal(false);toast$('Fond supprimé')}} style={{background:'var(--bg3)',color:'#f87171',border:'1px solid rgba(248,113,113,.3)',borderRadius:11,padding:'11px 9px',fontSize:12,fontFamily:'inherit',cursor:'pointer'}}>🗑</button>
+              <button onClick={()=>setShowBgModal(false)} style={{background:'var(--bg3)',color:'var(--muted)',border:'1px solid var(--border)',borderRadius:11,padding:'11px 9px',fontSize:13,fontFamily:'inherit',cursor:'pointer'}}>✕</button>
             </div>
           </div>
         </div>
